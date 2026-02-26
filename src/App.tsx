@@ -11,7 +11,9 @@ import {
 import { motion } from "motion/react";
 
 export default function App() {
-  const isPowerUpMode = new URLSearchParams(window.location.search).get("mode") === "powerup";
+  const searchParams = new URLSearchParams(window.location.search);
+  const isPowerUpMode = searchParams.get("mode") === "powerup";
+  const debugEnabled = isPowerUpMode && searchParams.get("debug") === "1";
   const [token, setToken] = useState<string | null>(trelloService.getToken());
   const [boards, setBoards] = useState<TrelloBoard[]>([]);
   const [selectedBoard, setSelectedBoard] = useState<string>("");
@@ -22,8 +24,15 @@ export default function App() {
   const [powerUpReady, setPowerUpReady] = useState(!isPowerUpMode);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
   const getStorageKey = (cardId: string) => `trello_table_metadata_${cardId}`;
+  const pushDebugLog = (message: string) => {
+    if (!debugEnabled) return;
+    const entry = `[${new Date().toISOString()}] ${message}`;
+    setDebugLogs(prev => [...prev.slice(-19), entry]);
+    console.log(`[TTM Iframe] ${message}`);
+  };
 
   // Handle OAuth message from popup
   useEffect(() => {
@@ -45,6 +54,10 @@ export default function App() {
 
   // Fetch boards when token is available
   useEffect(() => {
+    pushDebugLog(`App started. powerUpMode=${isPowerUpMode}`);
+  }, []);
+
+  useEffect(() => {
     if (!isPowerUpMode && token) {
       const apiKey = process.env.VITE_TRELLO_API_KEY;
       if (!apiKey) {
@@ -62,9 +75,11 @@ export default function App() {
 
     const setupPowerUpContext = async () => {
       try {
+        pushDebugLog("Reading Trello Power-Up iframe context...");
         const iframe = window.TrelloPowerUp?.iframe();
         if (!iframe) {
           setError("Power-Up context is not available.");
+          pushDebugLog("ERROR: window.TrelloPowerUp.iframe() is not available.");
           return;
         }
 
@@ -72,8 +87,10 @@ export default function App() {
         setSelectedBoard(cardContext.idBoard);
         setControlCardId(cardContext.id);
         setPowerUpReady(true);
+        pushDebugLog(`Power-Up context loaded. board=${cardContext.idBoard}, card=${cardContext.id}`);
       } catch {
         setError("Could not read Trello card context.");
+        pushDebugLog("ERROR: Failed to read Trello card context.");
       }
     };
 
@@ -83,6 +100,7 @@ export default function App() {
   // Fetch cards when board is selected
   useEffect(() => {
     if (selectedBoard) {
+      pushDebugLog(`Fetching board cards for board=${selectedBoard}`);
       trelloService.fetchCards(selectedBoard).then(setCards);
     }
   }, [selectedBoard]);
@@ -97,21 +115,26 @@ export default function App() {
   const loadControlCardData = async () => {
     setLoading(true);
     try {
+      pushDebugLog(`Loading control card data for card=${controlCardId}`);
       const cachedControlCard = cards.find(c => c.id === controlCardId);
       const controlCard = cachedControlCard ?? await trelloService.fetchCard(controlCardId);
       const linked = await trelloService.extractLinkedCards(controlCard);
       setLinkedCards(linked);
+      pushDebugLog(`Linked cards loaded: ${linked.length}`);
 
       if (isPowerUpMode && window.TrelloPowerUp?.iframe) {
         const iframe = window.TrelloPowerUp.iframe();
         const metadataMap = (await iframe.get("card", "shared", "linkedCardMetadata", {})) as Record<string, CardMetadata>;
         setCardMetadata(metadataMap ?? {});
+        pushDebugLog(`Loaded notes from Trello shared storage. records=${Object.keys(metadataMap ?? {}).length}`);
       } else {
         const raw = localStorage.getItem(getStorageKey(controlCardId));
         setCardMetadata(raw ? JSON.parse(raw) : {});
+        pushDebugLog(`Loaded notes from localStorage. hasData=${raw ? "yes" : "no"}`);
       }
     } catch (err) {
       setError("Error loading data");
+      pushDebugLog("ERROR: Failed loading control card data.");
     } finally {
       setLoading(false);
     }
@@ -138,8 +161,10 @@ export default function App() {
     if (isPowerUpMode && window.TrelloPowerUp?.iframe) {
       const iframe = window.TrelloPowerUp.iframe();
       await iframe.set("card", "shared", "linkedCardMetadata", nextMap);
+      pushDebugLog(`Saved note in Trello shared storage for linked card=${cardId}`);
     } else {
       localStorage.setItem(getStorageKey(controlCardId), JSON.stringify(nextMap));
+      pushDebugLog(`Saved note in localStorage for linked card=${cardId}`);
     }
 
     setCardMetadata(nextMap);
@@ -185,6 +210,12 @@ export default function App() {
 
   return (
     <div className={`bg-[#E4E3E0] text-[#141414] font-sans ${isPowerUpMode ? "min-h-[520px]" : "min-h-screen"}`}>
+      {debugEnabled && (
+        <div className="mx-8 mt-4 p-3 bg-black text-green-300 rounded-lg text-[11px] font-mono max-h-40 overflow-auto">
+          <div className="font-bold mb-1">TTM Debug Trace</div>
+          {debugLogs.length === 0 ? <div>Waiting for logs...</div> : debugLogs.map((line, i) => <div key={i}>{line}</div>)}
+        </div>
+      )}
       {/* Header */}
       <header className={`bg-white border-b border-[#141414]/10 px-8 py-4 flex items-center justify-between ${isPowerUpMode ? "" : "sticky top-0 z-10"}`}>
         <div className="flex items-center gap-4">
