@@ -40,5 +40,4 @@ export interface CardMetadata {
   control_card_id: string;
   card_id: string;
   note: string;
-  priority: number | null;
 }

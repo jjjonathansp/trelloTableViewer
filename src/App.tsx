@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
 import { trelloService } from "./services/trello";
-import { TrelloBoard, TrelloCard, CardMetadata } from "./types";
+import { TrelloCard, CardMetadata } from "./types";
 import { 
   ExternalLink, 
   Layout, 
-  LogOut, 
   Database,
   Columns
 } from "lucide-react";
@@ -15,10 +14,8 @@ export default function App() {
   const isPowerUpMode = searchParams.get("mode") === "powerup";
   const debugEnabled = isPowerUpMode && searchParams.get("debug") === "1";
   const [token, setToken] = useState<string | null>(trelloService.getToken());
-  const [boards, setBoards] = useState<TrelloBoard[]>([]);
-  const [selectedBoard, setSelectedBoard] = useState<string>("");
-  const [cards, setCards] = useState<TrelloCard[]>([]);
   const [controlCardId, setControlCardId] = useState<string>("");
+  const [controlCardName, setControlCardName] = useState<string>("");
   const [linkedCards, setLinkedCards] = useState<TrelloCard[]>([]);
   const [cardMetadata, setCardMetadata] = useState<Record<string, CardMetadata>>({});
   const [powerUpReady, setPowerUpReady] = useState(!isPowerUpMode);
@@ -52,23 +49,9 @@ export default function App() {
     window.open(url, "trello_auth", "width=600,height=700");
   };
 
-  // Fetch boards when token is available
   useEffect(() => {
     pushDebugLog(`App started. powerUpMode=${isPowerUpMode}`);
   }, []);
-
-  useEffect(() => {
-    if (!isPowerUpMode && token) {
-      const apiKey = process.env.VITE_TRELLO_API_KEY;
-      if (!apiKey) {
-        setError("Trello API Key is missing. Please add VITE_TRELLO_API_KEY to your Secrets.");
-        return;
-      }
-      trelloService.fetchBoards()
-        .then(setBoards)
-        .catch(() => setError("Error fetching boards. Check your API key and token."));
-    }
-  }, [token, isPowerUpMode]);
 
   useEffect(() => {
     if (!isPowerUpMode) return;
@@ -83,11 +66,11 @@ export default function App() {
           return;
         }
 
-        const cardContext = await iframe.card("id", "idBoard");
-        setSelectedBoard(cardContext.idBoard);
+        const cardContext = await iframe.card("id", "name");
         setControlCardId(cardContext.id);
+        setControlCardName((cardContext as { id: string; name?: string }).name ?? "");
         setPowerUpReady(true);
-        pushDebugLog(`Power-Up context loaded. board=${cardContext.idBoard}, card=${cardContext.id}`);
+        pushDebugLog(`Power-Up context loaded. card=${cardContext.id}`);
       } catch {
         setError("Could not read Trello card context.");
         pushDebugLog("ERROR: Failed to read Trello card context.");
@@ -97,39 +80,55 @@ export default function App() {
     setupPowerUpContext();
   }, [isPowerUpMode]);
 
-  // Fetch cards when board is selected
   useEffect(() => {
-    if (selectedBoard) {
-      pushDebugLog(`Fetching board cards for board=${selectedBoard}`);
-      trelloService.fetchCards(selectedBoard).then(setCards);
-    }
-  }, [selectedBoard]);
-
-  // Fetch linked cards and custom data when control card is selected
-  useEffect(() => {
-    if (controlCardId && token) {
+    if (isPowerUpMode && controlCardId && token) {
       loadControlCardData();
     }
-  }, [controlCardId, token, cards]);
+  }, [controlCardId, token, isPowerUpMode]);
 
   const loadControlCardData = async () => {
     setLoading(true);
     try {
       pushDebugLog(`Loading control card data for card=${controlCardId}`);
-      const cachedControlCard = cards.find(c => c.id === controlCardId);
-      const controlCard = cachedControlCard ?? await trelloService.fetchCard(controlCardId);
+      const controlCard = await trelloService.fetchCard(controlCardId);
+      setControlCardName(controlCard.name);
       const linked = await trelloService.extractLinkedCards(controlCard);
       setLinkedCards(linked);
       pushDebugLog(`Linked cards loaded: ${linked.length}`);
 
       if (isPowerUpMode && window.TrelloPowerUp?.iframe) {
         const iframe = window.TrelloPowerUp.iframe();
-        const metadataMap = (await iframe.get("card", "shared", "linkedCardMetadata", {})) as Record<string, CardMetadata>;
-        setCardMetadata(metadataMap ?? {});
-        pushDebugLog(`Loaded notes from Trello shared storage. records=${Object.keys(metadataMap ?? {}).length}`);
+        const notesMap = (await iframe.get("card", "shared", "linkedCardNotes", {})) as Record<string, string>;
+        const legacyMetadataMap = (await iframe.get("card", "shared", "linkedCardMetadata", {})) as Record<string, CardMetadata>;
+        const mergedNotes = {
+          ...Object.entries(legacyMetadataMap ?? {}).reduce<Record<string, string>>((acc, [cardId, metadata]) => {
+            acc[cardId] = metadata?.note ?? "";
+            return acc;
+          }, {}),
+          ...(notesMap ?? {})
+        };
+        const normalizedMerged = Object.entries(mergedNotes).reduce<Record<string, CardMetadata>>((acc, [cardId, note]) => {
+          acc[cardId] = {
+            control_card_id: controlCardId,
+            card_id: cardId,
+            note: note ?? ""
+          };
+          return acc;
+        }, {});
+        setCardMetadata(normalizedMerged);
+        pushDebugLog(`Loaded notes from Trello shared storage. records=${Object.keys(normalizedMerged).length}`);
       } else {
         const raw = localStorage.getItem(getStorageKey(controlCardId));
-        setCardMetadata(raw ? JSON.parse(raw) : {});
+        const parsed = raw ? JSON.parse(raw) as Record<string, string> : {};
+        const normalized = Object.entries(parsed).reduce<Record<string, CardMetadata>>((acc, [cardId, note]) => {
+          acc[cardId] = {
+            control_card_id: controlCardId,
+            card_id: cardId,
+            note: note ?? ""
+          };
+          return acc;
+        }, {});
+        setCardMetadata(normalized);
         pushDebugLog(`Loaded notes from localStorage. hasData=${raw ? "yes" : "no"}`);
       }
     } catch (err) {
@@ -140,42 +139,47 @@ export default function App() {
     }
   };
 
-  const handleUpdateMetadata = async (cardId: string, patch: Partial<Pick<CardMetadata, "note" | "priority">>) => {
-    const current = cardMetadata[cardId] ?? {
-      control_card_id: controlCardId,
-      card_id: cardId,
-      note: "",
-      priority: null
-    };
-
-    const next: CardMetadata = {
-      ...current,
-      ...patch
-    };
-
-    const nextMap = {
-      ...cardMetadata,
-      [cardId]: next
-    };
-
+  const persistNotes = async (notes: Record<string, string>, updatedCardId: string) => {
     if (isPowerUpMode && window.TrelloPowerUp?.iframe) {
       const iframe = window.TrelloPowerUp.iframe();
-      await iframe.set("card", "shared", "linkedCardMetadata", nextMap);
-      pushDebugLog(`Saved note in Trello shared storage for linked card=${cardId}`);
+      await iframe.set("card", "shared", "linkedCardNotes", notes);
+      pushDebugLog(`Saved note in Trello shared storage for linked card=${updatedCardId}`);
     } else {
-      localStorage.setItem(getStorageKey(controlCardId), JSON.stringify(nextMap));
-      pushDebugLog(`Saved note in localStorage for linked card=${cardId}`);
+      localStorage.setItem(getStorageKey(controlCardId), JSON.stringify(notes));
+      pushDebugLog(`Saved note in localStorage for linked card=${updatedCardId}`);
     }
+  };
 
-    setCardMetadata(nextMap);
+  const handleUpdateNote = (cardId: string, note: string) => {
+    setCardMetadata(prev => {
+      const nextMap = {
+        ...prev,
+        [cardId]: {
+          control_card_id: controlCardId,
+          card_id: cardId,
+          note
+        }
+      };
+
+      const notesOnly = (Object.entries(nextMap) as Array<[string, CardMetadata]>).reduce<Record<string, string>>((acc, [linkedCardId, metadata]) => {
+        acc[linkedCardId] = metadata.note;
+        return acc;
+      }, {});
+
+      persistNotes(notesOnly, cardId).catch(() => {
+        setError("Error saving note");
+        pushDebugLog(`ERROR: Failed saving note for linked card=${cardId}`);
+      });
+
+      return nextMap;
+    });
   };
 
   const getMetadataForCard = (cardId: string): CardMetadata => {
     return cardMetadata[cardId] ?? {
       control_card_id: controlCardId,
       card_id: cardId,
-      note: "",
-      priority: null
+      note: ""
     };
   };
 
@@ -208,6 +212,22 @@ export default function App() {
     );
   }
 
+  if (!isPowerUpMode) {
+    return (
+      <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans flex items-center justify-center p-6">
+        <div className="max-w-lg w-full bg-white p-8 rounded-2xl shadow-xl border border-black/5 text-center">
+          <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Layout className="text-white w-8 h-8" />
+          </div>
+          <h1 className="text-2xl font-bold mb-2">Power-Up Only</h1>
+          <p className="text-gray-500">
+            This app is intended to run inside Trello card back sections. Open a Trello card where the Power-Up is installed.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`bg-[#E4E3E0] text-[#141414] font-sans ${isPowerUpMode ? "min-h-[520px]" : "min-h-screen"}`}>
       {debugEnabled && (
@@ -224,37 +244,6 @@ export default function App() {
           </div>
           <h1 className="text-xl font-bold tracking-tight italic font-serif">Trello Table Master</h1>
         </div>
-
-        {!isPowerUpMode && (
-          <div className="flex items-center gap-4">
-            <select 
-              value={selectedBoard}
-              onChange={(e) => setSelectedBoard(e.target.value)}
-              className="bg-[#f5f5f5] border border-black/5 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 ring-blue-500/20"
-            >
-              <option value="">Select Board</option>
-              {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-
-            <select 
-              value={controlCardId}
-              onChange={(e) => setControlCardId(e.target.value)}
-              disabled={!selectedBoard}
-              className="bg-[#f5f5f5] border border-black/5 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 ring-blue-500/20 disabled:opacity-50"
-            >
-              <option value="">Select Control Card</option>
-              {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-
-            <button 
-              onClick={() => { trelloService.logout(); setToken(null); }}
-              className="p-2 hover:bg-red-50 text-red-500 rounded-lg transition-colors"
-              title="Logout"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
-          </div>
-        )}
       </header>
 
       <main className="p-8">
@@ -283,7 +272,7 @@ export default function App() {
             <div className="p-6 border-b border-[#141414]/10 flex items-center justify-between bg-gray-50/50">
               <div className="flex items-center gap-3">
                 <Columns className="w-5 h-5 text-blue-600" />
-                <h2 className="font-bold text-lg">Control Card: {cards.find(c => c.id === controlCardId)?.name}</h2>
+                <h2 className="font-bold text-lg">Control Card: {controlCardName || controlCardId}</h2>
               </div>
             </div>
 
@@ -334,7 +323,7 @@ export default function App() {
                         <td className="px-6 py-4">
                           <textarea
                             value={getMetadataForCard(card.id).note}
-                            onChange={(e) => handleUpdateMetadata(card.id, { note: e.target.value })}
+                            onChange={(e) => handleUpdateNote(card.id, e.target.value)}
                             placeholder="Add note..."
                             className="w-full bg-transparent border border-[#141414]/10 focus:ring-1 ring-blue-500/20 rounded p-2 text-sm resize-none min-h-[40px] hover:bg-gray-100/50 transition-colors"
                           />
