@@ -21,11 +21,17 @@ View your app in AI Studio: https://ai.studio/apps/052225e3-17b5-4a4e-b562-341b4
 
 ## Use as Trello Power-Up
 
-1. Start the app locally or deploy it (`npm run dev` for local testing).
+1. Deploy the app to Vercel.
 2. In Trello, open your Power-Ups admin and create/edit a custom Power-Up.
 3. Set the **Iframe Connector URL** to:
-   `http://localhost:3000/power-up.js`
-   (or your deployed domain + `/power-up.js`).
+   `https://YOUR-VERCEL-DOMAIN.vercel.app/power-up.js`
 4. Add the Power-Up to a board.
 5. Open any control card: the Power-Up shows a table in the card back section with all linked cards found in the control card description/checklists.
 6. Add notes per linked card directly in that table.
+
+## Important Notes for Vercel
+
+- This project now works without Express routes for Power-Up runtime features.
+- `power-up.js` and OAuth callback are served from `public/` as static files.
+- Notes are stored in Trello Power-Up shared card storage (`t.set`/`t.get`), scoped to each control card.
+- `vercel.json` includes SPA rewrites to `index.html` for client-side routing compatibility.

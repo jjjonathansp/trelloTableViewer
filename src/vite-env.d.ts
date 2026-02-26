@@ -10,6 +10,8 @@ interface ImportMeta {
 
 interface TrelloPowerUpIframe {
   card: (...fields: string[]) => Promise<{ id: string; idBoard: string }>;
+  get: (scope: "card", visibility: "shared", key: string, defaultValue?: unknown) => Promise<unknown>;
+  set: (scope: "card", visibility: "shared", key: string, value: unknown) => Promise<void>;
 }
 
 interface TrelloPowerUpGlobal {

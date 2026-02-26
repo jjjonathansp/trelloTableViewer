@@ -4,7 +4,7 @@ const API_KEY = process.env.VITE_TRELLO_API_KEY;
 
 export const trelloService = {
   getAuthUrl: () => {
-    const returnUrl = `${window.location.origin}/auth/trello/callback`;
+    const returnUrl = `${window.location.origin}/auth/trello/callback.html`;
     return `https://trello.com/1/authorize?key=${API_KEY}&name=TrelloTableMaster&expiration=never&response_type=token&scope=read,write&return_url=${returnUrl}`;
   },
 

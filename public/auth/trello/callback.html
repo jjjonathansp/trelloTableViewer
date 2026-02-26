@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trello Auth Callback</title>
+  </head>
+  <body>
+    <script>
+      const hash = window.location.hash;
+      if (hash && hash.includes("token=")) {
+        const token = hash.split("token=")[1].split("&")[0];
+        if (window.opener) {
+          window.opener.postMessage({ type: "TRELLO_AUTH_SUCCESS", token }, "*");
+          window.close();
+        }
+      }
+    </script>
+    <p>Authenticating with Trello... this window will close automatically.</p>
+  </body>
+</html>

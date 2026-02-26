@@ -23,6 +23,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const getStorageKey = (cardId: string) => `trello_table_metadata_${cardId}`;
+
   // Handle OAuth message from popup
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -100,13 +102,14 @@ export default function App() {
       const linked = await trelloService.extractLinkedCards(controlCard);
       setLinkedCards(linked);
 
-      const metadataRes = await fetch(`/api/card-metadata/${controlCardId}`);
-      const metadata: CardMetadata[] = await metadataRes.json();
-      const metadataMap = metadata.reduce<Record<string, CardMetadata>>((acc, item) => {
-        acc[item.card_id] = item;
-        return acc;
-      }, {});
-      setCardMetadata(metadataMap);
+      if (isPowerUpMode && window.TrelloPowerUp?.iframe) {
+        const iframe = window.TrelloPowerUp.iframe();
+        const metadataMap = (await iframe.get("card", "shared", "linkedCardMetadata", {})) as Record<string, CardMetadata>;
+        setCardMetadata(metadataMap ?? {});
+      } else {
+        const raw = localStorage.getItem(getStorageKey(controlCardId));
+        setCardMetadata(raw ? JSON.parse(raw) : {});
+      }
     } catch (err) {
       setError("Error loading data");
     } finally {
@@ -127,21 +130,19 @@ export default function App() {
       ...patch
     };
 
-    await fetch("/api/card-metadata", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        controlCardId,
-        cardId,
-        note: next.note,
-        priority: next.priority ?? null
-      })
-    });
-
-    setCardMetadata(prev => ({
-      ...prev,
+    const nextMap = {
+      ...cardMetadata,
       [cardId]: next
-    }));
+    };
+
+    if (isPowerUpMode && window.TrelloPowerUp?.iframe) {
+      const iframe = window.TrelloPowerUp.iframe();
+      await iframe.set("card", "shared", "linkedCardMetadata", nextMap);
+    } else {
+      localStorage.setItem(getStorageKey(controlCardId), JSON.stringify(nextMap));
+    }
+
+    setCardMetadata(nextMap);
   };
 
   const getMetadataForCard = (cardId: string): CardMetadata => {
