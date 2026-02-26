@@ -1,0 +1,5 @@
+{
+  "name": "Trello Table Master",
+  "description": "Visualize Trello cards in a powerful table view with custom columns and notes, linked to a control card.",
+  "requestFramePermissions": []
+}
