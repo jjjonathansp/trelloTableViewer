@@ -44,6 +44,49 @@ function initPowerUpConnector(attempts) {
       "attachment-sections": function () {
         console.log("[TTM Power-Up] attachment-sections requested (compat mode)");
         return [];
+      },
+      "attachment-thumbnail": function () {
+        console.log("[TTM Power-Up] attachment-thumbnail requested (compat mode)");
+        return null;
+      },
+      "card-from-url": function () {
+        console.log("[TTM Power-Up] card-from-url requested (compat mode)");
+        return null;
+      },
+      "format-url": function () {
+        console.log("[TTM Power-Up] format-url requested (compat mode)");
+        return null;
+      },
+      "list-actions": function () {
+        console.log("[TTM Power-Up] list-actions requested (compat mode)");
+        return [];
+      },
+      "list-sorters": function () {
+        console.log("[TTM Power-Up] list-sorters requested (compat mode)");
+        return [];
+      },
+      "on-disable": function () {
+        console.log("[TTM Power-Up] on-disable called (compat mode)");
+      },
+      "authorization-status": function () {
+        console.log("[TTM Power-Up] authorization-status requested (compat mode)");
+        return { authorized: true };
+      },
+      "show-authorization": function () {
+        console.log("[TTM Power-Up] show-authorization requested (compat mode)");
+        return {
+          type: "iframe",
+          url: "./?mode=powerup&debug=1",
+          height: 520
+        };
+      },
+      "save-attachment": function () {
+        console.log("[TTM Power-Up] save-attachment requested (compat mode)");
+        return null;
+      },
+      "remove-data": function () {
+        console.log("[TTM Power-Up] remove-data requested (compat mode)");
+        return null;
       }
     });
 
