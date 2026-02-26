@@ -1,14 +1,13 @@
 import { useState, useEffect } from "react";
 import { trelloService } from "./services/trello";
-import { TrelloBoard, TrelloCard, CustomColumn, CustomData } from "./types";
+import { TrelloBoard, TrelloCard, CardMetadata } from "./types";
 import { 
-  Plus, 
-  Trash2, 
   ExternalLink, 
   Layout, 
   LogOut, 
   Database,
-  Columns
+  Columns,
+  ArrowUpDown
 } from "lucide-react";
 import { motion } from "motion/react";
 
@@ -19,8 +18,8 @@ export default function App() {
   const [cards, setCards] = useState<TrelloCard[]>([]);
   const [controlCardId, setControlCardId] = useState<string>("");
   const [linkedCards, setLinkedCards] = useState<TrelloCard[]>([]);
-  const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
-  const [customData, setCustomData] = useState<CustomData[]>([]);
+  const [cardMetadata, setCardMetadata] = useState<Record<string, CardMetadata>>({});
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,16 +78,13 @@ export default function App() {
         setLinkedCards(linked);
       }
 
-      const [colsRes, dataRes] = await Promise.all([
-        fetch(`/api/columns/${controlCardId}`),
-        fetch(`/api/data/${controlCardId}`)
-      ]);
-      
-      const cols = await colsRes.json();
-      const data = await dataRes.json();
-      
-      setCustomColumns(cols);
-      setCustomData(data);
+      const metadataRes = await fetch(`/api/card-metadata/${controlCardId}`);
+      const metadata: CardMetadata[] = await metadataRes.json();
+      const metadataMap = metadata.reduce<Record<string, CardMetadata>>((acc, item) => {
+        acc[item.card_id] = item;
+        return acc;
+      }, {});
+      setCardMetadata(metadataMap);
     } catch (err) {
       setError("Error loading data");
     } finally {
@@ -96,45 +92,57 @@ export default function App() {
     }
   };
 
-  const handleAddColumn = async () => {
-    const name = prompt("Enter column name:");
-    if (!name) return;
+  const handleUpdateMetadata = async (cardId: string, patch: Partial<Pick<CardMetadata, "note" | "priority">>) => {
+    const current = cardMetadata[cardId] ?? {
+      control_card_id: controlCardId,
+      card_id: cardId,
+      note: "",
+      priority: null
+    };
 
-    const res = await fetch("/api/columns", {
+    const next: CardMetadata = {
+      ...current,
+      ...patch
+    };
+
+    await fetch("/api/card-metadata", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ controlCardId, name })
+      body: JSON.stringify({
+        controlCardId,
+        cardId,
+        note: next.note,
+        priority: next.priority
+      })
     });
-    const newCol = await res.json();
-    setCustomColumns([...customColumns, newCol]);
+
+    setCardMetadata(prev => ({
+      ...prev,
+      [cardId]: next
+    }));
   };
 
-  const handleDeleteColumn = async (id: number) => {
-    if (!confirm("Are you sure? All data in this column will be lost.")) return;
-    await fetch(`/api/columns/${id}`, { method: "DELETE" });
-    setCustomColumns(customColumns.filter(c => c.id !== id));
-    setCustomData(customData.filter(d => d.column_id !== id));
+  const getMetadataForCard = (cardId: string): CardMetadata => {
+    return cardMetadata[cardId] ?? {
+      control_card_id: controlCardId,
+      card_id: cardId,
+      note: "",
+      priority: null
+    };
   };
 
-  const handleUpdateData = async (cardId: string, columnId: number, value: string) => {
-    await fetch("/api/data", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cardId, columnId, value })
-    });
-    
-    setCustomData(prev => {
-      const existing = prev.find(d => d.card_id === cardId && d.column_id === columnId);
-      if (existing) {
-        return prev.map(d => d.card_id === cardId && d.column_id === columnId ? { ...d, value } : d);
-      }
-      return [...prev, { card_id: cardId, column_id: columnId, value }];
-    });
-  };
+  const sortedLinkedCards = [...linkedCards].sort((cardA, cardB) => {
+    const priorityA = getMetadataForCard(cardA.id).priority;
+    const priorityB = getMetadataForCard(cardB.id).priority;
 
-  const getCustomValue = (cardId: string, columnId: number) => {
-    return customData.find(d => d.card_id === cardId && d.column_id === columnId)?.value || "";
-  };
+    const normalizedA = priorityA ?? Number.MAX_SAFE_INTEGER;
+    const normalizedB = priorityB ?? Number.MAX_SAFE_INTEGER;
+    if (normalizedA === normalizedB) return cardA.name.localeCompare(cardB.name);
+
+    return sortOrder === "asc"
+      ? normalizedA - normalizedB
+      : normalizedB - normalizedA;
+  });
 
   if (!token) {
     return (
@@ -210,7 +218,7 @@ export default function App() {
             </div>
             <h2 className="text-2xl font-bold mb-2">No Control Card Selected</h2>
             <p className="text-gray-500 max-w-md">
-              Select a board and a card that contains links to other cards in its description or checklists to generate your table.
+              Select a board and a control card that contains links to other cards in its description or checklists to generate your table.
             </p>
           </div>
         ) : (
@@ -218,14 +226,14 @@ export default function App() {
             <div className="p-6 border-b border-[#141414]/10 flex items-center justify-between bg-gray-50/50">
               <div className="flex items-center gap-3">
                 <Columns className="w-5 h-5 text-blue-600" />
-                <h2 className="font-bold text-lg">Card View: {cards.find(c => c.id === controlCardId)?.name}</h2>
+                <h2 className="font-bold text-lg">Control Card: {cards.find(c => c.id === controlCardId)?.name}</h2>
               </div>
               <button 
-                onClick={handleAddColumn}
+                onClick={() => setSortOrder(prev => (prev === "asc" ? "desc" : "asc"))}
                 className="flex items-center gap-2 bg-[#141414] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-black transition-colors"
               >
-                <Plus className="w-4 h-4" />
-                Add Column
+                <ArrowUpDown className="w-4 h-4" />
+                Priority: {sortOrder === "asc" ? "Low → High" : "High → Low"}
               </button>
             </div>
 
@@ -236,36 +244,29 @@ export default function App() {
                     <th className="px-6 py-4 text-left text-[11px] font-serif italic uppercase tracking-wider text-gray-500 border-b border-[#141414]/10">
                       Trello Card
                     </th>
-                    {customColumns.map(col => (
-                      <th key={col.id} className="px-6 py-4 text-left text-[11px] font-serif italic uppercase tracking-wider text-gray-500 border-b border-[#141414]/10 group">
-                        <div className="flex items-center justify-between">
-                          <span>{col.name}</span>
-                          <button 
-                            onClick={() => handleDeleteColumn(col.id)}
-                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 text-red-400 rounded transition-all"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </th>
-                    ))}
+                    <th className="px-6 py-4 text-left text-[11px] font-serif italic uppercase tracking-wider text-gray-500 border-b border-[#141414]/10">
+                      Priority
+                    </th>
+                    <th className="px-6 py-4 text-left text-[11px] font-serif italic uppercase tracking-wider text-gray-500 border-b border-[#141414]/10">
+                      Notes
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#141414]/5">
                   {loading ? (
                     <tr>
-                      <td colSpan={customColumns.length + 1} className="px-6 py-12 text-center text-gray-400">
+                      <td colSpan={3} className="px-6 py-12 text-center text-gray-400">
                         Loading linked cards...
                       </td>
                     </tr>
                   ) : linkedCards.length === 0 ? (
                     <tr>
-                      <td colSpan={customColumns.length + 1} className="px-6 py-12 text-center text-gray-400">
+                      <td colSpan={3} className="px-6 py-12 text-center text-gray-400">
                         No linked cards found in this control card.
                       </td>
                     </tr>
                   ) : (
-                    linkedCards.map(card => (
+                    sortedLinkedCards.map(card => (
                       <tr key={card.id} className="hover:bg-gray-50/50 transition-colors group">
                         <td className="px-6 py-4">
                           <div className="flex items-center justify-between">
@@ -283,16 +284,29 @@ export default function App() {
                             </a>
                           </div>
                         </td>
-                        {customColumns.map(col => (
-                          <td key={col.id} className="px-6 py-4">
-                            <textarea
-                              value={getCustomValue(card.id, col.id)}
-                              onChange={(e) => handleUpdateData(card.id, col.id, e.target.value)}
-                              placeholder="Add note..."
-                              className="w-full bg-transparent border-none focus:ring-1 ring-blue-500/20 rounded p-2 text-sm resize-none min-h-[40px] hover:bg-gray-100/50 transition-colors"
-                            />
-                          </td>
-                        ))}
+                        <td className="px-6 py-4 w-[160px]">
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="e.g. 1"
+                            value={getMetadataForCard(card.id).priority ?? ""}
+                            onChange={(e) => {
+                              const nextValue = e.target.value;
+                              handleUpdateMetadata(card.id, {
+                                priority: nextValue === "" ? null : Number(nextValue)
+                              });
+                            }}
+                            className="w-full bg-transparent border border-[#141414]/10 focus:ring-1 ring-blue-500/20 rounded p-2 text-sm hover:bg-gray-100/50 transition-colors"
+                          />
+                        </td>
+                        <td className="px-6 py-4">
+                          <textarea
+                            value={getMetadataForCard(card.id).note}
+                            onChange={(e) => handleUpdateMetadata(card.id, { note: e.target.value })}
+                            placeholder="Add note..."
+                            className="w-full bg-transparent border border-[#141414]/10 focus:ring-1 ring-blue-500/20 rounded p-2 text-sm resize-none min-h-[40px] hover:bg-gray-100/50 transition-colors"
+                          />
+                        </td>
                       </tr>
                     ))
                   )}

@@ -24,6 +24,14 @@ db.exec(`
     PRIMARY KEY (card_id, column_id),
     FOREIGN KEY (column_id) REFERENCES custom_columns(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS card_metadata (
+    control_card_id TEXT NOT NULL,
+    card_id TEXT NOT NULL,
+    note TEXT DEFAULT '',
+    priority INTEGER,
+    PRIMARY KEY (control_card_id, card_id)
+  );
 `);
 
 async function startServer() {
@@ -90,6 +98,28 @@ async function startServer() {
       VALUES (?, ?, ?)
       ON CONFLICT(card_id, column_id) DO UPDATE SET value = excluded.value
     `).run(cardId, columnId, value);
+    res.json({ success: true });
+  });
+
+  app.get("/api/card-metadata/:controlCardId", (req, res) => {
+    const { controlCardId } = req.params;
+    const metadata = db.prepare(`
+      SELECT control_card_id, card_id, note, priority
+      FROM card_metadata
+      WHERE control_card_id = ?
+    `).all(controlCardId);
+    res.json(metadata);
+  });
+
+  app.post("/api/card-metadata", (req, res) => {
+    const { controlCardId, cardId, note, priority } = req.body;
+    db.prepare(`
+      INSERT INTO card_metadata (control_card_id, card_id, note, priority)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(control_card_id, card_id)
+      DO UPDATE SET note = excluded.note, priority = excluded.priority
+    `).run(controlCardId, cardId, note ?? "", priority ?? null);
+
     res.json({ success: true });
   });
 
