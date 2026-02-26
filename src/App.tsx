@@ -6,12 +6,12 @@ import {
   Layout, 
   LogOut, 
   Database,
-  Columns,
-  ArrowUpDown
+  Columns
 } from "lucide-react";
 import { motion } from "motion/react";
 
 export default function App() {
+  const isPowerUpMode = new URLSearchParams(window.location.search).get("mode") === "powerup";
   const [token, setToken] = useState<string | null>(trelloService.getToken());
   const [boards, setBoards] = useState<TrelloBoard[]>([]);
   const [selectedBoard, setSelectedBoard] = useState<string>("");
@@ -19,7 +19,7 @@ export default function App() {
   const [controlCardId, setControlCardId] = useState<string>("");
   const [linkedCards, setLinkedCards] = useState<TrelloCard[]>([]);
   const [cardMetadata, setCardMetadata] = useState<Record<string, CardMetadata>>({});
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const [powerUpReady, setPowerUpReady] = useState(!isPowerUpMode);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,7 +43,7 @@ export default function App() {
 
   // Fetch boards when token is available
   useEffect(() => {
-    if (token) {
+    if (!isPowerUpMode && token) {
       const apiKey = process.env.VITE_TRELLO_API_KEY;
       if (!apiKey) {
         setError("Trello API Key is missing. Please add VITE_TRELLO_API_KEY to your Secrets.");
@@ -53,7 +53,30 @@ export default function App() {
         .then(setBoards)
         .catch(() => setError("Error fetching boards. Check your API key and token."));
     }
-  }, [token]);
+  }, [token, isPowerUpMode]);
+
+  useEffect(() => {
+    if (!isPowerUpMode) return;
+
+    const setupPowerUpContext = async () => {
+      try {
+        const iframe = window.TrelloPowerUp?.iframe();
+        if (!iframe) {
+          setError("Power-Up context is not available.");
+          return;
+        }
+
+        const cardContext = await iframe.card("id", "idBoard");
+        setSelectedBoard(cardContext.idBoard);
+        setControlCardId(cardContext.id);
+        setPowerUpReady(true);
+      } catch {
+        setError("Could not read Trello card context.");
+      }
+    };
+
+    setupPowerUpContext();
+  }, [isPowerUpMode]);
 
   // Fetch cards when board is selected
   useEffect(() => {
@@ -64,19 +87,18 @@ export default function App() {
 
   // Fetch linked cards and custom data when control card is selected
   useEffect(() => {
-    if (controlCardId) {
+    if (controlCardId && token) {
       loadControlCardData();
     }
-  }, [controlCardId]);
+  }, [controlCardId, token, cards]);
 
   const loadControlCardData = async () => {
     setLoading(true);
     try {
-      const controlCard = cards.find(c => c.id === controlCardId);
-      if (controlCard) {
-        const linked = await trelloService.extractLinkedCards(controlCard);
-        setLinkedCards(linked);
-      }
+      const cachedControlCard = cards.find(c => c.id === controlCardId);
+      const controlCard = cachedControlCard ?? await trelloService.fetchCard(controlCardId);
+      const linked = await trelloService.extractLinkedCards(controlCard);
+      setLinkedCards(linked);
 
       const metadataRes = await fetch(`/api/card-metadata/${controlCardId}`);
       const metadata: CardMetadata[] = await metadataRes.json();
@@ -112,7 +134,7 @@ export default function App() {
         controlCardId,
         cardId,
         note: next.note,
-        priority: next.priority
+        priority: next.priority ?? null
       })
     });
 
@@ -131,22 +153,9 @@ export default function App() {
     };
   };
 
-  const sortedLinkedCards = [...linkedCards].sort((cardA, cardB) => {
-    const priorityA = getMetadataForCard(cardA.id).priority;
-    const priorityB = getMetadataForCard(cardB.id).priority;
-
-    const normalizedA = priorityA ?? Number.MAX_SAFE_INTEGER;
-    const normalizedB = priorityB ?? Number.MAX_SAFE_INTEGER;
-    if (normalizedA === normalizedB) return cardA.name.localeCompare(cardB.name);
-
-    return sortOrder === "asc"
-      ? normalizedA - normalizedB
-      : normalizedB - normalizedA;
-  });
-
   if (!token) {
     return (
-      <div className="min-h-screen bg-[#E4E3E0] flex items-center justify-center p-6">
+      <div className={`bg-[#E4E3E0] flex items-center justify-center p-6 ${isPowerUpMode ? "min-h-[520px]" : "min-h-screen"}`}>
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -156,7 +165,11 @@ export default function App() {
             <Layout className="text-white w-8 h-8" />
           </div>
           <h1 className="text-3xl font-bold text-[#141414] mb-2 tracking-tight">Trello Table Master</h1>
-          <p className="text-gray-500 mb-8">Connect your Trello account to start visualizing your cards in a powerful table view.</p>
+          <p className="text-gray-500 mb-8">
+            {isPowerUpMode
+              ? "Connect your Trello account to render this control card as a table inside Trello."
+              : "Connect your Trello account to start visualizing your cards in a powerful table view."}
+          </p>
           <button 
             onClick={handleConnect}
             className="w-full bg-[#141414] text-white py-4 rounded-xl font-semibold hover:bg-black transition-colors flex items-center justify-center gap-2"
@@ -170,48 +183,60 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans">
+    <div className={`bg-[#E4E3E0] text-[#141414] font-sans ${isPowerUpMode ? "min-h-[520px]" : "min-h-screen"}`}>
       {/* Header */}
-      <header className="bg-white border-b border-[#141414]/10 px-8 py-4 flex items-center justify-between sticky top-0 z-10">
+      <header className={`bg-white border-b border-[#141414]/10 px-8 py-4 flex items-center justify-between ${isPowerUpMode ? "" : "sticky top-0 z-10"}`}>
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
             <Layout className="text-white w-5 h-5" />
           </div>
           <h1 className="text-xl font-bold tracking-tight italic font-serif">Trello Table Master</h1>
         </div>
-        
-        <div className="flex items-center gap-4">
-          <select 
-            value={selectedBoard}
-            onChange={(e) => setSelectedBoard(e.target.value)}
-            className="bg-[#f5f5f5] border border-black/5 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 ring-blue-500/20"
-          >
-            <option value="">Select Board</option>
-            {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
 
-          <select 
-            value={controlCardId}
-            onChange={(e) => setControlCardId(e.target.value)}
-            disabled={!selectedBoard}
-            className="bg-[#f5f5f5] border border-black/5 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 ring-blue-500/20 disabled:opacity-50"
-          >
-            <option value="">Select Control Card</option>
-            {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+        {!isPowerUpMode && (
+          <div className="flex items-center gap-4">
+            <select 
+              value={selectedBoard}
+              onChange={(e) => setSelectedBoard(e.target.value)}
+              className="bg-[#f5f5f5] border border-black/5 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 ring-blue-500/20"
+            >
+              <option value="">Select Board</option>
+              {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
 
-          <button 
-            onClick={() => { trelloService.logout(); setToken(null); }}
-            className="p-2 hover:bg-red-50 text-red-500 rounded-lg transition-colors"
-            title="Logout"
-          >
-            <LogOut className="w-5 h-5" />
-          </button>
-        </div>
+            <select 
+              value={controlCardId}
+              onChange={(e) => setControlCardId(e.target.value)}
+              disabled={!selectedBoard}
+              className="bg-[#f5f5f5] border border-black/5 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 ring-blue-500/20 disabled:opacity-50"
+            >
+              <option value="">Select Control Card</option>
+              {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+
+            <button 
+              onClick={() => { trelloService.logout(); setToken(null); }}
+              className="p-2 hover:bg-red-50 text-red-500 rounded-lg transition-colors"
+              title="Logout"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
+        )}
       </header>
 
       <main className="p-8">
-        {!controlCardId ? (
+        {!powerUpReady ? (
+          <div className="h-[40vh] flex flex-col items-center justify-center text-center">
+            <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mb-6 shadow-sm border border-black/5">
+              <Database className="w-10 h-10 text-gray-300" />
+            </div>
+            <h2 className="text-2xl font-bold mb-2">Loading Trello Context</h2>
+            <p className="text-gray-500 max-w-md">
+              Preparing the card table inside Trello...
+            </p>
+          </div>
+        ) : !controlCardId ? (
           <div className="h-[60vh] flex flex-col items-center justify-center text-center">
             <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mb-6 shadow-sm border border-black/5">
               <Database className="w-10 h-10 text-gray-300" />
@@ -228,13 +253,6 @@ export default function App() {
                 <Columns className="w-5 h-5 text-blue-600" />
                 <h2 className="font-bold text-lg">Control Card: {cards.find(c => c.id === controlCardId)?.name}</h2>
               </div>
-              <button 
-                onClick={() => setSortOrder(prev => (prev === "asc" ? "desc" : "asc"))}
-                className="flex items-center gap-2 bg-[#141414] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-black transition-colors"
-              >
-                <ArrowUpDown className="w-4 h-4" />
-                Priority: {sortOrder === "asc" ? "Low → High" : "High → Low"}
-              </button>
             </div>
 
             <div className="overflow-x-auto">
@@ -245,9 +263,6 @@ export default function App() {
                       Trello Card
                     </th>
                     <th className="px-6 py-4 text-left text-[11px] font-serif italic uppercase tracking-wider text-gray-500 border-b border-[#141414]/10">
-                      Priority
-                    </th>
-                    <th className="px-6 py-4 text-left text-[11px] font-serif italic uppercase tracking-wider text-gray-500 border-b border-[#141414]/10">
                       Notes
                     </th>
                   </tr>
@@ -255,18 +270,18 @@ export default function App() {
                 <tbody className="divide-y divide-[#141414]/5">
                   {loading ? (
                     <tr>
-                      <td colSpan={3} className="px-6 py-12 text-center text-gray-400">
+                      <td colSpan={2} className="px-6 py-12 text-center text-gray-400">
                         Loading linked cards...
                       </td>
                     </tr>
                   ) : linkedCards.length === 0 ? (
                     <tr>
-                      <td colSpan={3} className="px-6 py-12 text-center text-gray-400">
+                      <td colSpan={2} className="px-6 py-12 text-center text-gray-400">
                         No linked cards found in this control card.
                       </td>
                     </tr>
                   ) : (
-                    sortedLinkedCards.map(card => (
+                    linkedCards.map(card => (
                       <tr key={card.id} className="hover:bg-gray-50/50 transition-colors group">
                         <td className="px-6 py-4">
                           <div className="flex items-center justify-between">
@@ -283,21 +298,6 @@ export default function App() {
                               <ExternalLink className="w-4 h-4" />
                             </a>
                           </div>
-                        </td>
-                        <td className="px-6 py-4 w-[160px]">
-                          <input
-                            type="number"
-                            min={1}
-                            placeholder="e.g. 1"
-                            value={getMetadataForCard(card.id).priority ?? ""}
-                            onChange={(e) => {
-                              const nextValue = e.target.value;
-                              handleUpdateMetadata(card.id, {
-                                priority: nextValue === "" ? null : Number(nextValue)
-                              });
-                            }}
-                            className="w-full bg-transparent border border-[#141414]/10 focus:ring-1 ring-blue-500/20 rounded p-2 text-sm hover:bg-gray-100/50 transition-colors"
-                          />
                         </td>
                         <td className="px-6 py-4">
                           <textarea
@@ -318,7 +318,7 @@ export default function App() {
       </main>
 
       {/* Footer Info */}
-      <footer className="p-8 text-center text-gray-400 text-xs border-t border-[#141414]/5 mt-12">
+      <footer className={`p-8 text-center text-gray-400 text-xs border-t border-[#141414]/5 ${isPowerUpMode ? "mt-6" : "mt-12"}`}>
         <p>Trello Table Master • Built for efficient card management</p>
       </footer>
     </div>
